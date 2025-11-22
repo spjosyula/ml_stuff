@@ -176,12 +176,86 @@ class Adam(Optimizer):
             # Update volatility tracker (like RMSprop)
             self.v[key] = self.beta2 * self.v[key] + (1 - self.beta2) * (grads[key] ** 2)
 
-            # Early in training, both m and v are too close to zero because they start at zero. So we correct them:
+            # Early in training, both m and v are too close to zero because they start at zero. So we correct them
             m_corrected = self.m[key] / (1 - self.beta1 ** self.t)
             v_corrected = self.v[key] / (1 - self.beta2 ** self.t)
 
             # Apply both momentum and adaptive learning rate
             updated_params[key] = params[key] - self.learning_rate * m_corrected / (np.sqrt(v_corrected) + self.epsilon)
+
+        return updated_params
+
+# AdamW - Adam with decoupled weight decay (better regularization)
+class AdamW(Optimizer):
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8, weight_decay=0.01):
+        super().__init__(learning_rate)
+        self.beta1 = beta1   
+        self.beta2 = beta2   
+        self.epsilon = epsilon   
+        self.weight_decay = weight_decay   
+        self.m = {}   
+        self.v = {}   
+        self.t = 0   
+
+    def initialize(self, params):
+        for key, param in params.items():
+            self.m[key] = np.zeros_like(param)
+            self.v[key] = np.zeros_like(param)
+        self.initialized = True
+
+    def update(self, params, grads):
+        if not self.initialized:
+            self.initialize(params)
+        self.t += 1   
+        updated_params = {}
+
+        for key in params.keys():
+            self.m[key] = self.beta1 * self.m[key] + (1 - self.beta1) * grads[key]
+            self.v[key] = self.beta2 * self.v[key] + (1 - self.beta2) * (grads[key] ** 2)
+            m_corrected = self.m[key] / (1 - self.beta1 ** self.t)
+            v_corrected = self.v[key] / (1 - self.beta2 ** self.t)
+
+            # Apply Adam update
+            update = self.learning_rate * m_corrected / (np.sqrt(v_corrected) + self.epsilon)
+            
+            # Key difference: apply weight decay directly (not mixed with gradient)
+            updated_params[key] = params[key] - update - self.learning_rate * self.weight_decay * params[key]
+
+        return updated_params
+
+# LION - Evolved sign-based optimizer (memory efficient, simple, powerful)
+class LION(Optimizer):
+    def __init__(self, learning_rate=0.0001, beta1=0.9, beta2=0.99, weight_decay=0.01):
+        super().__init__(learning_rate)
+        self.beta1 = beta1   # how much to smooth the gradient direction
+        self.beta2 = beta2   # how much to remember for the next step
+        self.weight_decay = weight_decay   # weight shrinking
+        self.m = {}   # momentum tracker
+
+    def initialize(self, params):
+        for key, param in params.items():
+            self.m[key] = np.zeros_like(param)
+        self.initialized = True
+
+    def update(self, params, grads):
+        #Uses only the SIGN of gradients (not magnitude)"
+        if not self.initialized:
+            self.initialize(params)
+
+        updated_params = {}
+
+        for key in params.keys():
+            # Apply weight decay first
+            params_decayed = params[key] * (1 - self.learning_rate * self.weight_decay)
+            
+            # Use sign of interpolated gradient (smart smoothing)
+            update_direction = np.sign(self.beta1 * self.m[key] + (1 - self.beta1) * grads[key])
+            
+            # Update with only the sign 
+            updated_params[key] = params_decayed - self.learning_rate * update_direction
+            
+            # Update momentum for next iteration
+            self.m[key] = self.beta2 * self.m[key] + (1 - self.beta2) * grads[key]
 
         return updated_params
 
@@ -266,19 +340,23 @@ def train_with_optimizer(X_train, Y_train, optimizer, epochs=500, batch_size=128
 
     return W1, b1, W2, b2, history, training_time
 
-# Compare all three optimizers
-def compare_optimizers(epochs=500):
-    #Train with each optimizer and create comparison charts
-    print("Optimizer Comparison: SGD Momentum vs RMSprop vs Adam")
+# Compare all five optimizers
+def compare_optimizers(epochs=50):
+    """Train with each optimizer and create comparison charts"""
+    print("=" * 70)
+    print("OPTIMIZER COMPARISON: SGD Momentum vs RMSprop vs Adam vs AdamW vs LION")
+    print("=" * 70)
     print(f"Training for {epochs} epochs with batch size 128\n")
 
     batch_size = 128
 
-    # Set up the three optimizers
+    # Set up all five optimizers
     optimizers = {
         'SGD Momentum': SGDMomentum(learning_rate=0.01, momentum=0.9),
         'RMSprop': RMSprop(learning_rate=0.001, beta=0.9),
-        'Adam': Adam(learning_rate=0.001, beta1=0.9, beta2=0.999)
+        'Adam': Adam(learning_rate=0.001, beta1=0.9, beta2=0.999),
+        'AdamW': AdamW(learning_rate=0.001, beta1=0.9, beta2=0.999, weight_decay=0.01),
+        'LION': LION(learning_rate=0.0001, beta1=0.9, beta2=0.99, weight_decay=0.01)
     }
 
     results = {}
@@ -350,7 +428,7 @@ def compare_optimizers(epochs=500):
                      colLabels=['Optimizer', 'Final Acc', 'Final Loss', 'Epochs to 90%', 'Time'],
                      cellLoc='center',
                      loc='center',
-                     colWidths=[0.25, 0.15, 0.15, 0.2, 0.15])
+                     colWidths=[0.22, 0.15, 0.15, 0.18, 0.15])
     table.auto_set_font_size(False)
     table.set_fontsize(9)
     table.scale(1, 2)

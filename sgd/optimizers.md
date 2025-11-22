@@ -197,6 +197,103 @@ In the first few iterations:
 
 ---
 
+## AdamW (Adam with Decoupled Weight Decay)
+
+**Problem:** In regular Adam, weight decay is mixed with the gradient, which can interfere with the adaptive learning rate mechanism.
+
+**Solution:** Apply weight decay directly to the weights, separate from the gradient-based update.
+
+### Intuition
+
+Imagine you're following a path (gradient) while also trying to stay near the center (weight decay):
+- **Regular Adam**: Mixes both signals together, which can confuse the adaptive learning rate
+- **AdamW**: Follows the gradient path AND separately pulls you toward the center
+
+This separation makes the regularization more effective and predictable.
+
+### The Math
+
+```
+# Same as Adam for momentum and adaptive LR
+m = β₁ * m + (1 - β₁) * gradient
+v = β₂ * v + (1 - β₂) * gradient²
+
+m_hat = m / (1 - β₁^t)
+v_hat = v / (1 - β₂^t)
+
+# Key difference: weight decay applied directly
+parameter = parameter - learning_rate * m_hat / (√v_hat + ε) - learning_rate * λ * parameter
+```
+
+Where:
+- **λ (lambda)**: Weight decay coefficient (typically 0.01)
+- Everything else is the same as Adam
+
+### What It Does
+
+1. **Better regularization**: Weight decay works as intended, not affected by adaptive LR
+2. **Improved generalization**: Often achieves better test accuracy than Adam
+3. **More stable**: Less sensitive to weight decay hyperparameter choice
+
+### When to Use
+
+- Good for: Large models where preventing overfitting is important
+- Learning rate: Same as Adam (0.001)
+- Weight decay: Start with 0.01
+- Often outperforms Adam on complex tasks
+
+---
+
+## LION (Evolved Sign-Based Optimizer)
+
+**Problem:** Do we really need the magnitude of gradients? What if we just use the direction (sign)?
+
+**Solution:** LION uses only the sign of gradients, discovered through evolutionary search to be surprisingly effective.
+
+### Intuition
+
+Most optimizers treat a gradient of 0.001 different from 0.1:
+- LION: "Both are positive? Both get the same update!"
+- Only the **direction** matters, not how steep the slope is
+- This is like hiking where you only care about "uphill vs downhill", not the steepness
+
+Surprisingly, this works really well and is very memory efficient.
+
+### The Math
+
+```
+# Interpolate between current gradient and momentum
+update_direction = sign(β₁ * m + (1 - β₁) * gradient)
+
+# Update using only the sign
+parameter = parameter * (1 - learning_rate * λ) - learning_rate * update_direction
+
+# Update momentum for next step
+m = β₂ * m + (1 - β₂) * gradient
+```
+
+Where:
+- **β₁**: Interpolation coefficient (typically 0.9)
+- **β₂**: Momentum decay (typically 0.99)
+- **λ**: Weight decay (typically 0.01)
+- **sign()**: Returns +1 for positive, -1 for negative, 0 for zero
+
+### What It Does
+
+1. **Simple updates**: Only +1 or -1 steps (plus learning rate)
+2. **Memory efficient**: Only stores momentum, no second moment like Adam
+3. **Robust to gradient scale**: Gradient magnitude doesn't matter
+4. **Faster in some cases**: Less computation than Adam
+
+### When to Use
+
+- Good for: Large models, limited memory, when gradient magnitudes are unreliable
+- Learning rate: Use smaller than Adam (e.g., 0.0001)
+- Often competitive with or better than AdamW
+- Great for transformers and large language models
+
+---
+
 ## Comparison Summary
 
 | Optimizer | Strengths | Weaknesses | When to Use |
@@ -204,6 +301,8 @@ In the first few iterations:
 | **SGD Momentum** | Simple, interpretable, good for convex problems | Requires careful LR tuning, struggles with adaptive needs | Small networks, well-understood problems |
 | **RMSprop** | Handles sparse gradients well, per-parameter LR | No momentum, can be unstable on non-stationary problems | RNNs, time-series, sparse data |
 | **Adam** | Combines momentum + adaptive LR, robust, works well out-of-the-box | More hyperparameters, slightly more computation | Default choice for most problems |
+| **AdamW** | Better regularization than Adam, improved generalization | Slightly more hyperparameters to tune | Large models, when overfitting is a concern |
+| **LION** | Memory efficient, simple, robust to gradient scale | Requires smaller learning rate, less intuitive | Large models, transformers, limited memory |
 
 ---
 
@@ -213,6 +312,8 @@ In the first few iterations:
 - **SGD Momentum**: Start with 0.01, tune carefully
 - **RMSprop**: Start with 0.001
 - **Adam**: Start with 0.001 (usually works)
+- **AdamW**: Start with 0.001 (same as Adam)
+- **LION**: Start with 0.0001 (smaller than others)
 
 ### Batch Size
 
@@ -225,7 +326,8 @@ In the first few iterations:
 - **Fast initial drop**: Good sign, optimizer is working
 - **Oscillating loss**: Learning rate too high or batch size too small
 - **Plateaus early**: Learning rate too low or stuck in local minimum
-- **Adam converges fastest**: Usually reaches high accuracy in fewer epochs
+- **Adam/AdamW converge fastest**: Usually reach high accuracy in fewer epochs
+- **LION is competitive**: Often matches or beats AdamW with proper tuning
 
 
 ## Summary
@@ -234,5 +336,8 @@ In the first few iterations:
 2. **Momentum**: Smooths updates and accelerates in consistent directions
 3. **RMSprop**: Adapts learning rate per parameter based on gradient history
 4. **Adam**: Combines momentum and adaptive LR for robust performance
-5. **Default choice**: Adam with LR=0.001 works well for most problems
-6. **When in doubt**: Try all three and compare convergence curves!
+5. **AdamW**: Improves on Adam with better weight decay handling
+6. **LION**: Uses only gradient sign for simple, memory-efficient updates
+7. **Default choice**: Adam or AdamW with LR=0.001 works well for most problems
+8. **For large models**: Try AdamW or LION
+9. **When in doubt**: Try all optimizers and compare convergence curves!
