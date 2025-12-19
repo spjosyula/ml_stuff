@@ -21,6 +21,22 @@ class SingleHeadAttention:
         exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))  # subtract max for stability (prevents overflow)
         return exp_x / np.sum(exp_x, axis=-1, keepdims=True)  # normalize to get probabilities that sum to 1
 
+    def softmax_backward(self, grad_output):
+        """
+        grad_output: gradient flowing back from next layer, shape (seq_len, seq_len)
+        returns: gradient wrt softmax input (scores), same shape
+
+        Math: For softmax output S, gradient is S * (grad - sum(S * grad))
+        Why? Because changing one input affects ALL outputs (they must sum to 1)
+        """
+        S = self.attention_weights  # softmax output we saved during forward, shape (seq_len, seq_len)
+
+        # For each row: grad_input = S * (grad_output - sum(S * grad_output))
+        sum_term = np.sum(S * grad_output, axis=-1, keepdims=True)  # weighted sum per row
+        grad_scores = S * (grad_output - sum_term)  # element-wise: how much each score should change
+
+        return grad_scores  # shape (seq_len, seq_len)
+
     def forward(self, x):
         """
         x: input tensor, shape (seq_len, d_model)
@@ -44,3 +60,32 @@ class SingleHeadAttention:
         output = self.attention_weights @ self.V  # (seq_len, d_model) - mix information based on attention
 
         return output  # each output word is now context-aware (knows about other words)
+
+    def backward(self, grad_output):
+        """
+        grad_output: gradient from next layer, shape (seq_len, d_model)
+        returns: gradient wrt input x, shape (seq_len, d_model)
+
+        Chain rule: work backwards through each operation in forward pass
+        """
+        # Step 6 backward: output = attention_weights @ V
+        grad_attention_weights = grad_output @ self.V.T  # how to change weights, shape (seq_len, seq_len)
+        grad_V = self.attention_weights.T @ grad_output  # how to change V, shape (seq_len, d_model)
+
+        # Step 5 backward: attention_weights = softmax(scores)
+        grad_scores = self.softmax_backward(grad_attention_weights)  # shape (seq_len, seq_len)
+
+        # Step 4 backward: scores = Q @ K.T / sqrt(d_k)
+        grad_scores = grad_scores / np.sqrt(self.d_k)  # undo the scaling
+        grad_Q = grad_scores @ self.K  # shape (seq_len, d_k)
+        grad_K = grad_scores.T @ self.Q  # shape (seq_len, d_k)
+
+        # Steps 1-3 backward: Q = x @ W_q, K = x @ W_k, V = x @ W_v
+        self.grad_W_q = self.x.T @ grad_Q  # gradient for query weights
+        self.grad_W_k = self.x.T @ grad_K  # gradient for key weights
+        self.grad_W_v = self.x.T @ grad_V  # gradient for value weights
+
+        # Gradient flows back through all three projections and sums up
+        grad_x = grad_Q @ self.W_q.T + grad_K @ self.W_k.T + grad_V @ self.W_v.T
+
+        return grad_x  # pass gradient to previous layer
