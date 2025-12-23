@@ -1,10 +1,11 @@
 import numpy as np
 
 class MultiHeadAttention:
-    def __init__(self, d_model, n_heads):
+    def __init__(self, d_model, n_heads, causal=False):
         self.d_model = d_model  # total embedding dimension
         self.n_heads = n_heads  # number of parallel attention heads
         self.head_dim = d_model // n_heads  # dimension per head
+        self.causal = causal  # if True, mask future tokens (for decoder/GPT)
 
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
 
@@ -62,6 +63,11 @@ class MultiHeadAttention:
         # Step 3: Compute attention for each head in parallel
         scores = self.Q_heads @ self.K_heads.transpose(0, 2, 1)  # (n_heads, seq_len, seq_len)
         scores = scores / np.sqrt(self.head_dim)  # scale by sqrt of head dimension
+
+        # Step 3.5: Apply causal mask (if enabled)
+        if self.causal:
+            mask = np.triu(np.ones((seq_len, seq_len)), k=1)  # upper triangle (above diagonal) = 1
+            scores = scores + (mask * -1e9)  # set future positions to -inf (use -1e9 for numerical stability)
 
         self.attention_weights = self.softmax(scores)  # (n_heads, seq_len, seq_len)
 
